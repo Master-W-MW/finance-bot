@@ -2,9 +2,10 @@
 // 100% free — no Anthropic API needed
 // Uses RSS feeds for live news + free APIs for rates
 
-const BOT_TOKEN  = process.env.BOT_TOKEN;
-const CHAT_ID    = process.env.CHAT_ID;
-const METALS_KEY = process.env.METALS_KEY; // optional
+const BOT_TOKEN     = process.env.BOT_TOKEN;
+const CHAT_ID       = process.env.CHAT_ID;
+const METALS_KEY    = process.env.METALS_KEY;    // optional
+const DASHBOARD_URL = process.env.DASHBOARD_URL || ""; // e.g. https://Master-W-MW.github.io/finance-bot/dashboard.html
 
 // ─── Fetch live gold + exchange rates ───────────────────────────────────────
 async function fetchRates() {
@@ -198,7 +199,7 @@ Importers win (cheaper goods). Palm oil & electronics exporters lose (USD revenu
 ─────────────────
 US Fed commentary + Brent crude price — both move USD/MYR and gold simultaneously.
 
-Rates fetched live: ${ts} MYT`;
+Rates fetched live: ${ts} MYT${DASHBOARD_URL ? "\n\n📊 Full dashboard: " + DASHBOARD_URL : ""}`;
 
   return { message, news };
 }
