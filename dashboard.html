@@ -259,17 +259,13 @@ header{padding:32px 48px 20px;border-bottom:1px solid var(--border);display:flex
     <div class="panel news-section">
       <div class="ph">
         <div class="pt">Daily financial news</div>
-        <span class="ptag" id="news-date-tag">—</span>
-      </div>
-      <div class="news-fetch-bar">
-        <input id="news-anth-key" type="password" placeholder="Anthropic API key — fetches live news"/>
-        <button class="nbtn" id="fetch-news-btn" onclick="fetchLiveNews()">Fetch today's news</button>
-        <button class="nbtn sec" onclick="useBotNews()">Use bot data</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="ptag" id="news-date-tag">—</span>
+          <button class="nbtn" id="fetch-news-btn" onclick="fetchLiveNews()" style="padding:4px 10px;font-size:9px">↻ Refresh</button>
+        </div>
       </div>
       <div class="thread-list" id="thread-list">
-        <div style="padding:18px;font-size:12px;color:var(--muted);line-height:1.6">
-          Enter your Anthropic API key above and click <strong>Fetch today's news</strong> to load live headlines — or click <strong>Use bot data</strong> if the bot has already run today.
-        </div>
+        <div class="news-loading">Loading today's news...</div>
       </div>
     </div>
   </div>
@@ -461,70 +457,112 @@ function updateSentiment(gold, myr){
   document.getElementById('sent-desc').textContent=descs[i];
 }
 
-// ── LIVE NEWS FETCH via Claude AI ──────────────────────────────────────────
+// ── LIVE NEWS via free RSS (no API key needed) ─────────────────────────────
 async function fetchLiveNews(){
-  const key = document.getElementById('news-anth-key').value.trim() || document.getElementById('anth-key').value.trim();
-  if(!key){ alert('Enter your Anthropic API key in the news bar above.'); return; }
-
   const btn=document.getElementById('fetch-news-btn');
-  btn.disabled=true; btn.textContent='Fetching...';
-  document.getElementById('thread-list').innerHTML='<div class="news-loading">Searching for today\'s financial news...</div>';
+  btn.disabled=true; btn.textContent='Loading...';
+  document.getElementById('thread-list').innerHTML='<div class="news-loading">Fetching latest financial news...</div>';
 
-  const today=new Date().toLocaleDateString('en-MY',{weekday:'long',year:'numeric',month:'short',day:'numeric'});
-  const gold=document.getElementById('m-gold').textContent;
-  const usd=document.getElementById('m-usd').textContent;
+  const PROXY='https://api.allorigins.win/raw?url=';
+  const feeds=[
+    'https://feeds.reuters.com/reuters/businessNews',
+    'https://www.investing.com/rss/news_25.rss',
+    'https://www.fxstreet.com/rss/news',
+    'https://finance.yahoo.com/rss/2.0/headline?s=USDMYR%3DX&region=MY&lang=en-MY',
+    'https://www.malaymail.com/feed/section/money',
+  ];
+  const keywords=['gold','ringgit','myr','malaysia','bank negara','bnm','oil','crude','brent','usd','dollar','fed','federal reserve','inflation','interest rate','forex','xau','commodity'];
 
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1200,
-        tools:[{type:'web_search_20250305',name:'web_search'}],
-        messages:[{role:'user',content:`Today is ${today}. Current rates: Gold=${gold}, USD/MYR=${usd}.
+  const allItems=[];
+  const fetches=feeds.map(async url=>{
+    try{
+      const r=await fetch(PROXY+encodeURIComponent(url),{signal:AbortSignal.timeout(8000)});
+      if(!r.ok) return;
+      const xml=await r.text();
+      const matches=xml.matchAll(/<item[^>]*>([\s\S]*?)<\/item>/gi);
+      for(const m of matches){
+        const block=m[1];
+        const title=(block.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>/i)||block.match(/<title[^>]*>(.*?)<\/title>/i))?.[1]?.trim();
+        if(!title) continue;
+        const clean=title.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/<[^>]+>/g,'');
+        if(keywords.some(k=>clean.toLowerCase().includes(k))) allItems.push(clean);
+      }
+    }catch(_){}
+  });
 
-Use web_search to find today's top financial news relevant to Malaysia, gold, USD/MYR, oil prices, BNM, or global markets.
+  await Promise.allSettled(fetches);
 
-Search for: "Malaysia financial news today" and "gold price news today" and "USD MYR today"
-
-Then respond with ONLY a JSON array (no other text, no markdown) like this:
-[
-  {"headline":"Full headline text","tag":"gold|myr|oil|bnm|global","impact":"pos|neg|neu","elaboration":"2-3 sentence explanation of what this means for Malaysian investors — how it affects gold price, MYR rate, or the local economy"},
-  ...
-]
-Return 5-7 items. No markdown, no backticks, pure JSON array only.`}]
-      })
-    });
-    if(!resp.ok) throw new Error('API '+resp.status);
-    const data=await resp.json();
-    const textBlock=data.content?.filter(b=>b.type==='text').map(b=>b.text).join('');
-    // Parse JSON from response
-    const jsonMatch=textBlock.match(/\[[\s\S]*\]/);
-    if(!jsonMatch) throw new Error('No JSON in response');
-    const items=JSON.parse(jsonMatch[0]);
-    renderNewsItems(items, today);
-    document.getElementById('news-date-tag').textContent=new Date().toLocaleDateString('en-MY',{month:'short',day:'numeric'});
-  } catch(e) {
-    document.getElementById('thread-list').innerHTML=`<div style="padding:16px 18px;font-size:12px;color:var(--red)">Error: ${e.message}. Check your API key and try again.</div>`;
-  } finally {
-    btn.disabled=false; btn.textContent="Fetch today's news";
+  // Deduplicate
+  const seen=new Set(), unique=[];
+  for(const t of allItems){
+    const k=t.toLowerCase().substring(0,40);
+    if(!seen.has(k)){seen.add(k);unique.push(t);}
+    if(unique.length>=7) break;
   }
+
+  const today=new Date().toLocaleDateString('en-MY',{weekday:'long',month:'short',day:'numeric'});
+  document.getElementById('news-date-tag').textContent=new Date().toLocaleDateString('en-MY',{month:'short',day:'numeric'});
+
+  if(unique.length===0){
+    // Fallback — show cached headlines if RSS failed (CORS on some browsers)
+    document.getElementById('thread-list').innerHTML=`
+      <div style="padding:14px 18px;font-size:12px;color:var(--muted);line-height:1.7">
+        RSS feeds blocked by browser security (CORS). News is available in your<br>
+        Telegram message every morning at 8AM via the bot.<br><br>
+        <strong style="color:var(--ink)">To see news here:</strong> run the bot once on your Mac
+        (<code style="font-size:11px;background:var(--paper2);padding:1px 5px;border-radius:2px">bash ~/finance-bot/run_bot.sh</code>),
+        then open this dashboard from the same folder.
+      </div>`;
+    btn.disabled=false; btn.textContent='↻ Refresh';
+    return;
+  }
+
+  renderNewsItems(unique.map(t=>({
+    headline:t,
+    tag:guessTag(t),
+    impact:analyseImpact(t),
+    elaboration:buildElaboration(t)
+  })), today);
+
+  btn.disabled=false; btn.textContent='↻ Refresh';
 }
 
-// ── RENDER NEWS ITEMS WITH ELABORATION ────────────────────────────────────
+// ── NEWS HELPERS ───────────────────────────────────────────────────────────
+function analyseImpact(t){
+  const lower=(t||'').toLowerCase();
+  if(/rate cut|fed cut|dovish|easing|weak dollar|dollar fall|gold rise|gold surge|ringgit gain|ringgit strengthen/.test(lower)) return 'pos';
+  if(/rate hike|hawkish|strong dollar|dollar rise|gold fall|gold drop|ringgit weak|ringgit fall|inflation rise/.test(lower)) return 'neg';
+  return 'neu';
+}
+
+function buildElaboration(t){
+  const lower=(t||'').toLowerCase();
+  if(/gold/.test(lower)) return 'Gold prices are denominated in USD — movements here directly affect what Malaysians pay per gram. A stronger Ringgit can offset USD gold gains, keeping local RM prices stable even when global gold rises.';
+  if(/ringgit|myr/.test(lower)) return 'Ringgit strength affects local gold prices (stronger MYR = cheaper gold in RM) and import costs. BNM rate decisions and foreign bond inflows are the key drivers of MYR direction.';
+  if(/bnm|bank negara|opr/.test(lower)) return 'BNM rate decisions directly influence the Ringgit. A rate hold keeps Malaysian bonds attractive to foreign investors, sustaining MYR demand and keeping local gold prices in check.';
+  if(/oil|brent|crude/.test(lower)) return 'Oil prices affect Malaysia via Petronas export revenue (positive) but also raise domestic fuel costs, nudging CPI upward and potentially delaying BNM rate cuts.';
+  if(/fed|federal reserve|fomc/.test(lower)) return 'Fed decisions move the USD globally. A dovish Fed weakens USD → gold USD rises, but a stronger MYR may offset this locally. Watch Fed signals as they drive both gold and USD/MYR simultaneously.';
+  return 'This development may affect global risk sentiment, flowing into gold safe-haven demand and emerging market currencies including the Malaysian Ringgit.';
+}
+
+// ── RENDER NEWS ITEMS ──────────────────────────────────────────────────────
 function renderNewsItems(items, date){
-  if(!items?.length){ document.getElementById('thread-list').innerHTML='<div style="padding:18px;font-size:12px;color:var(--muted)">No news items found.</div>'; return; }
-  document.getElementById('thread-list').innerHTML = items.map((item,i)=>`
+  if(!items?.length){ document.getElementById('thread-list').innerHTML='<div style="padding:18px;font-size:12px;color:var(--muted)">No relevant news found.</div>'; return; }
+  document.getElementById('thread-list').innerHTML = items.map((item,i)=>{
+    const headline=typeof item==='string'?item:(item.headline||'');
+    const tag=item.tag||guessTag(headline);
+    const impact=typeof item.impact==='string'?item.impact:analyseImpact(headline);
+    const elab=item.elaboration||buildElaboration(headline);
+    return `
     <div class="thread" onclick="this.classList.toggle('open')">
       <div class="thread-hd">
         <div class="tnum">0${i+1}</div>
         <div class="tbody-wrap">
-          <div class="ttitle">${item.headline}</div>
+          <div class="ttitle">${headline}</div>
           <div class="tmeta">
-            <span class="ttag tag-${item.tag||'global'}">${(item.tag||'global').toUpperCase()}</span>
+            <span class="ttag tag-${tag}">${tag.toUpperCase()}</span>
             <span class="tdate">${date||'Today'}</span>
-            <span class="timp ${item.impact==='pos'?'imp-pos':item.impact==='neg'?'imp-neg':'imp-neu'}">${item.impact==='pos'?'MYR ↑':item.impact==='neg'?'MYR ↓':'Neutral'}</span>
+            <span class="timp ${impact==='pos'?'imp-pos':impact==='neg'?'imp-neg':'imp-neu'}">${impact==='pos'?'MYR ↑':impact==='neg'?'MYR ↓':'Neutral'}</span>
           </div>
         </div>
         <div class="tarr">▶</div>
@@ -532,22 +570,28 @@ function renderNewsItems(items, date){
       <div class="thread-body">
         <div class="tl">
           <div class="tl-entry">
-            <div class="tl-dot ${item.impact==='pos'?'pos':item.impact==='neg'?'neg':'neu'}"></div>
+            <div class="tl-dot ${impact==='pos'?'pos':impact==='neg'?'neg':'neu'}"></div>
             <div>
               <div class="tl-date">Today · Impact on Malaysian markets</div>
-              <div class="tl-txt">${item.elaboration||'No elaboration available.'}</div>
+              <div class="tl-txt">${elab}</div>
             </div>
           </div>
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ── USE BOT DATA (from dashboard-data.json) ────────────────────────────────
 function useBotNews(){
-  if(!dashData){ alert('No bot data found. Run the bot first, or fetch live news using the Anthropic key.'); return; }
-  const items=(dashData.todayNews||[]).map(n=>({headline:n.text,tag:guessTag(n.text),impact:n.impact||'neu',elaboration:'From today\'s 8AM bot run. Market rates at time of delivery: Gold $'+n.goldUSD+', USD/MYR '+n.myrRate+'.'}));
-  const hist=(dashData.newsHistory||[]);
+  if(!dashData?.todayNews?.length){ fetchLiveNews(); return; }
+  const items=(dashData.todayNews||[]).map(n=>({
+    headline:n.text, tag:guessTag(n.text),
+    impact:n.impact||'neu',
+    elaboration:buildElaboration(n.text)+' (Bot run: Gold $'+n.goldUSD+', USD/MYR '+n.myrRate+')'
+  }));
+  renderNewsItems(items,'Today');
+}
   // Merge history into elaborations
   if(hist.length){
     const grouped=groupByTopic([...hist,...items.map(n=>({...n,date:'Today'}))]);
@@ -699,7 +743,13 @@ async function loadData(){
     if(!r.ok) throw new Error('no data');
     dashData=await r.json();
     applyData(dashData);
-  }catch(e){ fetchLiveRates(); }
+    // If bot data has news use it, otherwise fetch RSS
+    if(dashData.todayNews?.length) useBotNews();
+    else fetchLiveNews();
+  }catch(e){
+    fetchLiveRates();
+    fetchLiveNews(); // always fetch RSS news on load
+  }
 }
 
 async function refresh(){
