@@ -172,35 +172,58 @@ US Fed commentary + Brent crude price — both move USD/MYR and gold simultaneou
 Rates fetched live: ${ts} MYT`;
 }
 
-// ─── Save dashboard data to a JSON file ─────────────────────────────────────
+// --- Save dashboard data to a JSON file -------------------------------------
 async function saveDashboardData(rates, message) {
   const fs = await import("fs");
+  const today = new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" });
+
+  // Parse news bullets from message
+  const newsMatch = message.match(/NEWS TODAY\n([\s\S]*?)\n/);
+  const todayNews = newsMatch
+    ? newsMatch[1].split("\n")
+        .filter(l => l.trim().startsWith("\u2022"))
+        .map(l => ({
+          text: l.replace(/^\u2022\s*/, "").trim(),
+          date: today,
+          impact: guessImpact(l),
+          goldUSD: rates.goldUSD,
+          myrRate: parseFloat(rates.myrRate)
+        }))
+    : [];
+
   const data = {
     lastUpdated: new Date().toISOString(),
-    rates,
-    message,
-    history: []
+    rates, message, todayNews,
+    newsHistory: [], history: []
   };
-  // Load existing history if it exists
+
   try {
     const existing = JSON.parse(fs.readFileSync("dashboard-data.json", "utf8"));
-    data.history = (existing.history || []).slice(-29); // keep last 30 days
-    data.history.push({
-      date: new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" }),
-      goldMYR: rates.goldMYR,
-      goldUSD: rates.goldUSD,
-      myrRate: parseFloat(rates.myrRate)
+    data.history = (existing.history || []).slice(-29);
+    data.history.push({ date: today, goldMYR: rates.goldMYR, goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate) });
+
+    const prevNews = existing.newsHistory || [];
+    const prevToday = existing.todayNews || [];
+    const archived = prevToday.map(n => {
+      const goldDelta = rates.goldUSD - (n.goldUSD || rates.goldUSD);
+      const myrDelta = parseFloat(rates.myrRate) - (n.myrRate || parseFloat(rates.myrRate));
+      return { ...n, goldDelta: Math.round(goldDelta), myrDelta: parseFloat(myrDelta.toFixed(4)) };
     });
+    data.newsHistory = [...prevNews, ...archived].slice(-60);
   } catch(_) {
-    data.history = [{
-      date: new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" }),
-      goldMYR: rates.goldMYR,
-      goldUSD: rates.goldUSD,
-      myrRate: parseFloat(rates.myrRate)
-    }];
+    data.history = [{ date: today, goldMYR: rates.goldMYR, goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate) }];
   }
+
   fs.writeFileSync("dashboard-data.json", JSON.stringify(data, null, 2));
-  console.log("Dashboard data saved.");
+  console.log("Dashboard saved.", todayNews.length, "news items.");
+}
+
+// --- Guess impact from news text --------------------------------------------
+function guessImpact(text) {
+  const t = text.toLowerCase();
+  if (/strengthen|rally|surge|gain|rise|high|inflow|growth|strong|boost/.test(t)) return "pos";
+  if (/weaken|fall|drop|decline|risk|tension|war|inflation|concern/.test(t)) return "neg";
+  return "neu";
 }
 
 // ─── Send to Telegram ────────────────────────────────────────────────────────
