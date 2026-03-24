@@ -1,18 +1,20 @@
-// MY Finance Telegram Bot — with live news + dashboard data
-// Runs daily at 00:00 UTC (8:00 AM MYT) via Railway cron
+// MY Finance Telegram Bot
+// 100% free — no Anthropic API needed
+// Uses RSS feeds for live news + free APIs for rates
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID   = process.env.CHAT_ID;
-const ANTH_KEY  = process.env.ANTH_KEY;
+const BOT_TOKEN  = process.env.BOT_TOKEN;
+const CHAT_ID    = process.env.CHAT_ID;
+const METALS_KEY = process.env.METALS_KEY; // optional
 
-// ─── Fetch live exchange rate ───────────────────────────────────────────────
+// ─── Fetch live gold + exchange rates ───────────────────────────────────────
 async function fetchRates() {
   const r = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
   const d = await r.json();
   const myr = d.rates.MYR;
+
   let goldUSD = null;
-  // metals.dev — LBMA-sourced gold price (same benchmark Bloomberg uses)
-  const METALS_KEY = process.env.METALS_KEY;
+
+  // 1. metals.dev (optional, most accurate)
   if (METALS_KEY) {
     try {
       const g = await fetch(`https://api.metals.dev/v1/spot?api_key=${METALS_KEY}&base=USD&symbols=XAU`);
@@ -21,7 +23,7 @@ async function fetchRates() {
     } catch(_) {}
   }
 
-  // Fallback: frankfurter.app (no key needed)
+  // 2. frankfurter.app (free, no key)
   if (!goldUSD) {
     try {
       const g = await fetch("https://api.frankfurter.app/latest?from=XAU&to=USD");
@@ -30,18 +32,109 @@ async function fetchRates() {
     } catch(_) {}
   }
 
-  if (!goldUSD || isNaN(goldUSD)) goldUSD = 4435; // last-resort hardcoded fallback
+  if (!goldUSD || isNaN(goldUSD)) goldUSD = 4435;
 
   const goldMYR = Math.round(goldUSD * myr / 31.1035);
-  return {
-    myrRate:  myr.toFixed(4),
-    goldUSD:  Math.round(goldUSD),
-    goldMYR,
-    myrStrong: myr < 4.0
-  };
+  return { myrRate: myr.toFixed(4), goldUSD, goldMYR, myrStrong: myr < 4.0 };
 }
 
-// ─── Fetch live news + build full AI message ────────────────────────────────
+// ─── Fetch news from free RSS feeds (no API key needed) ─────────────────────
+async function fetchNews() {
+  const feeds = [
+    // Malaysia financial news
+    "https://www.malaymail.com/feed/section/money",
+    // Reuters markets (global)
+    "https://feeds.reuters.com/reuters/businessNews",
+    // Yahoo Finance Malaysia
+    "https://finance.yahoo.com/rss/2.0/headline?s=USDMYR%3DX&region=MY&lang=en-MY",
+    // Investing.com gold news
+    "https://www.investing.com/rss/news_25.rss",
+    // FX Street (forex + gold)
+    "https://www.fxstreet.com/rss/news",
+  ];
+
+  const keywords = [
+    "gold","ringgit","myr","malaysia","bank negara","bnm",
+    "oil","crude","brent","usd","dollar","fed","federal reserve",
+    "inflation","interest rate","forex","xau","commodity"
+  ];
+
+  const allItems = [];
+
+  for (const url of feeds) {
+    try {
+      const r = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; FinanceBot/1.0)" },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!r.ok) continue;
+      const xml = await r.text();
+
+      // Parse RSS items with regex (no XML parser needed)
+      const itemMatches = xml.matchAll(/<item[^>]*>([\s\S]*?)<\/item>/gi);
+      for (const match of itemMatches) {
+        const item = match[1];
+        const title = (item.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>/i) ||
+                       item.match(/<title[^>]*>(.*?)<\/title>/i))?.[1]?.trim();
+        const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/i))?.[1]?.trim();
+        if (!title) continue;
+
+        // Only keep finance-relevant headlines
+        const lower = title.toLowerCase();
+        if (keywords.some(k => lower.includes(k))) {
+          allItems.push({ title: title.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&#39;/g,"'").replace(/&quot;/g,'"'), pubDate });
+        }
+      }
+    } catch(_) {
+      // silently skip failed feeds
+    }
+  }
+
+  // Deduplicate and take top 6 most recent
+  const seen = new Set();
+  const unique = [];
+  for (const item of allItems) {
+    const key = item.title.toLowerCase().substring(0, 40);
+    if (!seen.has(key)) { seen.add(key); unique.push(item); }
+    if (unique.length >= 6) break;
+  }
+
+  return unique;
+}
+
+// ─── Analyse news impact on MYR/Gold ────────────────────────────────────────
+function analyseImpact(headline) {
+  const t = headline.toLowerCase();
+  if (/rate cut|fed cut|dovish|easing|weak dollar|dollar fall|gold rise|gold surge|ringgit gain|ringgit strengthen/.test(t))
+    return { emoji: "🟢", label: "MYR ↑ / Gold ↑" };
+  if (/rate hike|hawkish|strong dollar|dollar rise|gold fall|gold drop|ringgit weak|ringgit fall|inflation rise/.test(t))
+    return { emoji: "🔴", label: "MYR ↓ / Gold ↓" };
+  if (/oil rise|oil surge|brent up|crude up/.test(t))
+    return { emoji: "🟡", label: "Oil ↑ → MYR support" };
+  if (/oil fall|oil drop|brent down|crude down/.test(t))
+    return { emoji: "🟠", label: "Oil ↓ → MYR pressure" };
+  if (/malaysia|bnm|bank negara|bursa|klci/.test(t))
+    return { emoji: "🇲🇾", label: "MY market" };
+  return { emoji: "📰", label: "Global" };
+}
+
+// ─── Build market insight paragraph ─────────────────────────────────────────
+function buildInsight(rates) {
+  const myrNum  = parseFloat(rates.myrRate);
+  const goldUSD = rates.goldUSD;
+  const myrMood = myrNum < 4.0 ? "strong" : "under mild pressure";
+  const goldMood = goldUSD > 4000
+    ? `elevated at $${goldUSD.toLocaleString()} amid geopolitical risk`
+    : `eased to $${goldUSD.toLocaleString()}`;
+
+  const goldMYRCalc = `At USD/MYR ${rates.myrRate}, gold converts to RM ${rates.goldMYR}/g — a ${myrNum < 4.0 ? "stronger Ringgit is offsetting some of the USD gold price rise, keeping local gold prices in check" : "weaker Ringgit is amplifying the gold price in local terms"}.`;
+
+  return `Gold is ${goldMood}. Gold is priced in USD, so a ${myrNum < 4.0 ? "stronger" : "weaker"} Ringgit directly affects what Malaysians pay. ${goldMYRCalc}
+
+BNM holding rates at 2.75% keeps Malaysian bonds attractive to foreign investors, sustaining MYR demand. The Ringgit is currently ${myrMood} vs the dollar. If the US Fed signals rate cuts, USD weakens → gold USD rises but MYR gold may stay flat due to Ringgit strength.`;
+}
+
+// ─── Build the full Telegram message ────────────────────────────────────────
 async function buildMessage(rates) {
   const today = new Date().toLocaleDateString("en-MY", {
     weekday: "long", year: "numeric", month: "short", day: "numeric",
@@ -51,118 +144,54 @@ async function buildMessage(rates) {
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuala_Lumpur"
   });
 
-  if (!ANTH_KEY) return buildFallback(rates, today, ts);
+  console.log("Fetching RSS news feeds...");
+  const news = await fetchNews();
+  console.log(`Got ${news.length} relevant headlines`);
 
-  // Use Claude with web search to get today's news AND write the brief
-  const prompt = `Today is ${today}. You have access to the web_search tool.
+  const myrMood = rates.myrStrong ? "Ringgit holding strong vs dollar" : "Ringgit under mild pressure";
 
-Live market data (already fetched):
-- Gold spot: USD ${rates.goldUSD}/oz
-- USD/MYR rate: ${rates.myrRate}
-- Gold in MYR: ~RM ${rates.goldMYR}/gram (24K)
-- BNM OPR: 2.75% (unchanged)
-- Malaysia CPI: 1.6% YoY | GDP Q4 2025: 6.3% YoY
-- MYR: Asia top performer, +10.9% YoY vs USD
-
-TASK:
-1. First use web_search to find TODAY's top 3-5 financial news headlines relevant to Malaysia, gold price, USD/MYR, oil price, or global markets. Search for: "Malaysia finance news today" and "gold price USD MYR today"
-2. Then write a Telegram daily brief with these exact sections:
-
-📰 NEWS TODAY
-[3-5 bullet points of actual headlines from your search, each starting with •]
-
-─────────────────
-KEY NUMBERS
-─────────────────
-[5 numbers: gold MYR/g, USD/MYR, gold USD/oz, BNM OPR, CPI]
-
-─────────────────
-HOW THESE MARKETS CONNECT
-─────────────────
-💵 USD & Gold
-[2-3 sentences: how USD weakness/strength flows into gold USD price and then MYR gold price via exchange rate]
-
-🏦 BNM Rate & Ringgit
-[2-3 sentences: how BNM rate hold attracts bond inflows, strengthens MYR, lowers local gold price]
-
-🛢️ Oil & Inflation
-[2-3 sentences: how today's oil news affects Malaysia's CPI and BNM rate decision room]
-
-📦 MYR Impact: Winners & Losers
-[2 sentences: who benefits and who loses from current MYR strength]
-
-─────────────────
-🔍 WATCH TODAY
-─────────────────
-[One sharp sentence: what specific event or data release to watch and why]
-
-Rates fetched live: ${ts} MYT
-
-Plain text only. No markdown (* _ # etc). Max 6 emoji (section headers only). Be specific to today's actual news.`;
-
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTH_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
-
-  if (!resp.ok) {
-    console.error("Claude API error:", resp.status, await resp.text());
-    return buildFallback(rates, today, ts);
+  // News section
+  let newsSection = "";
+  if (news.length > 0) {
+    newsSection = "\n─────────────────\n📰 NEWS TODAY\n─────────────────\n";
+    news.forEach((item, i) => {
+      const impact = analyseImpact(item.title);
+      newsSection += `${impact.emoji} ${item.title}\n   ${impact.label}\n\n`;
+    });
+  } else {
+    newsSection = "\n─────────────────\n📰 NEWS TODAY\n─────────────────\nNo relevant headlines found — markets may be quiet.\n\n";
   }
 
-  const data = await resp.json();
-  // Extract final text response (after tool use)
-  const text = data.content
-    ?.filter(b => b.type === "text")
-    .map(b => b.text)
-    .join("") || "";
-
-  if (!text) return buildFallback(rates, today, ts);
-  return text;
-}
-
-// ─── Fallback message (no API key or error) ─────────────────────────────────
-function buildFallback(rates, today, ts) {
-  const myrMood = rates.myrStrong ? "Ringgit holding strong vs dollar" : "Ringgit under mild pressure";
-  const goldTrend = rates.goldMYR < 600 ? "eased from recent highs" : "elevated near recent highs";
-
-  return `📊 MY Finance Update
+  const message =
+`📊 MY Finance Update
 ${today} — 8:00 AM MYT
 ${myrMood}
-
-─────────────────
+${newsSection}─────────────────
 KEY NUMBERS
 ─────────────────
-💛 Gold (24K): RM ${rates.goldMYR}/g
+💛 Gold Spot/USD: $${rates.goldUSD.toLocaleString()}/oz
 💵 USD/MYR: ${rates.myrRate}
-📈 Gold (oz): USD ${rates.goldUSD}
+🪙 Gold MYR: RM ${rates.goldMYR}/gram (24K)
 🏦 BNM OPR: 2.75% (on hold)
 📦 CPI: 1.6% YoY | GDP Q4: 6.3%
 
 ─────────────────
 HOW THESE MARKETS CONNECT
 ─────────────────
+${buildInsight(rates)}
+
+─────────────────
 💵 USD & Gold
-Gold is priced in USD globally. When USD weakens, non-USD buyers find gold cheaper, lifting demand and its USD price. But what Malaysians pay depends on BOTH the USD gold price AND the USD/MYR rate. At ${rates.myrRate} today, gold has ${goldTrend} in MYR terms — the Ringgit acts as a natural hedge.
+Gold is priced in USD. USD weakens → gold USD rises. But a stronger MYR offsets this — so local gold prices can stay flat even when global gold rallies.
 
 🏦 BNM Rate & Ringgit
-BNM holding at 2.75% while the Fed weighs cuts narrows the rate gap in Malaysia's favour. Foreign bond investors pour into Malaysian assets for yield, driving MYR demand. More MYR demand means stronger Ringgit — which lowers local gold prices and makes imports cheaper.
+BNM holding at 2.75% attracts foreign bond inflows → MYR demand stays strong → Ringgit supported.
 
 🛢️ Oil & Inflation
-Malaysia exports oil via Petronas, so higher oil prices boost export revenue but also raise domestic fuel costs, nudging CPI up. Rising inflation reduces BNM's room to cut rates, keeping rates elevated and continuing to attract foreign capital.
+Higher oil boosts Petronas revenue but raises domestic costs → nudges CPI up → limits BNM rate cuts → keeps MYR supported.
 
-📦 MYR Impact: Winners & Losers
-A strong Ringgit helps importers (cheaper electronics, machinery, food) and data centre FDI. But it squeezes palm oil and semiconductor exporters who earn in USD.
+📦 Strong MYR: Winners & Losers
+Importers win (cheaper goods). Palm oil & electronics exporters lose (USD revenue converts to less MYR).
 
 ─────────────────
 🔍 WATCH TODAY
@@ -170,26 +199,22 @@ A strong Ringgit helps importers (cheaper electronics, machinery, food) and data
 US Fed commentary + Brent crude price — both move USD/MYR and gold simultaneously.
 
 Rates fetched live: ${ts} MYT`;
+
+  return { message, news };
 }
 
-// --- Save dashboard data to a JSON file -------------------------------------
-async function saveDashboardData(rates, message) {
+// ─── Save dashboard data ─────────────────────────────────────────────────────
+async function saveDashboardData(rates, message, news) {
   const fs = await import("fs");
   const today = new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" });
 
-  // Parse news bullets from message
-  const newsMatch = message.match(/NEWS TODAY\n([\s\S]*?)\n/);
-  const todayNews = newsMatch
-    ? newsMatch[1].split("\n")
-        .filter(l => l.trim().startsWith("\u2022"))
-        .map(l => ({
-          text: l.replace(/^\u2022\s*/, "").trim(),
-          date: today,
-          impact: guessImpact(l),
-          goldUSD: rates.goldUSD,
-          myrRate: parseFloat(rates.myrRate)
-        }))
-    : [];
+  const todayNews = news.map(n => ({
+    text: n.title,
+    date: today,
+    impact: analyseImpact(n.title).label,
+    goldUSD: rates.goldUSD,
+    myrRate: parseFloat(rates.myrRate)
+  }));
 
   const data = {
     lastUpdated: new Date().toISOString(),
@@ -200,30 +225,21 @@ async function saveDashboardData(rates, message) {
   try {
     const existing = JSON.parse(fs.readFileSync("dashboard-data.json", "utf8"));
     data.history = (existing.history || []).slice(-29);
-    data.history.push({ date: today, goldMYR: rates.goldMYR, goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate) });
-
-    const prevNews = existing.newsHistory || [];
-    const prevToday = existing.todayNews || [];
-    const archived = prevToday.map(n => {
-      const goldDelta = rates.goldUSD - (n.goldUSD || rates.goldUSD);
-      const myrDelta = parseFloat(rates.myrRate) - (n.myrRate || parseFloat(rates.myrRate));
-      return { ...n, goldDelta: Math.round(goldDelta), myrDelta: parseFloat(myrDelta.toFixed(4)) };
+    data.history.push({
+      date: today, goldMYR: rates.goldMYR,
+      goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate)
     });
-    data.newsHistory = [...prevNews, ...archived].slice(-60);
+    const prev = existing.todayNews || [];
+    data.newsHistory = [...(existing.newsHistory || []), ...prev].slice(-60);
   } catch(_) {
-    data.history = [{ date: today, goldMYR: rates.goldMYR, goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate) }];
+    data.history = [{
+      date: today, goldMYR: rates.goldMYR,
+      goldUSD: rates.goldUSD, myrRate: parseFloat(rates.myrRate)
+    }];
   }
 
   fs.writeFileSync("dashboard-data.json", JSON.stringify(data, null, 2));
-  console.log("Dashboard saved.", todayNews.length, "news items.");
-}
-
-// --- Guess impact from news text --------------------------------------------
-function guessImpact(text) {
-  const t = text.toLowerCase();
-  if (/strengthen|rally|surge|gain|rise|high|inflow|growth|strong|boost/.test(t)) return "pos";
-  if (/weaken|fall|drop|decline|risk|tension|war|inflation|concern/.test(t)) return "neg";
-  return "neu";
+  console.log(`Dashboard saved. ${todayNews.length} news items.`);
 }
 
 // ─── Send to Telegram ────────────────────────────────────────────────────────
@@ -246,20 +262,12 @@ async function main() {
   }
   console.log("Fetching live rates...");
   const rates = await fetchRates();
-  console.log(`USD/MYR: ${rates.myrRate} | Gold: USD ${rates.goldUSD}/oz | RM ${rates.goldMYR}/g`);
-
-  console.log("Building message with live news...");
-  const message = await buildMessage(rates);
-
-  console.log("Saving dashboard data...");
-  await saveDashboardData(rates, message);
-
+  console.log(`USD/MYR: ${rates.myrRate} | Gold: $${rates.goldUSD}/oz | RM ${rates.goldMYR}/g`);
+  const { message, news } = await buildMessage(rates);
+  await saveDashboardData(rates, message, news);
   console.log("Sending to Telegram...");
   await sendTelegram(message);
   console.log("Done.");
 }
 
-main().catch(e => {
-  console.error("Bot error:", e.message);
-  process.exit(1);
-});
+main().catch(e => { console.error("Bot error:", e.message); process.exit(1); });
