@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MY Finance Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --ink:#0a0a08;
+  --paper:#f7f4ed;
+  --paper2:#ede9df;
+  --paper3:#e0dbd0;
+  --gold:#b8860b;
+  --gold-light:#d4a017;
+  --gold-pale:#f5e9c8;
+  --teal:#1a6b5a;
+  --teal-light:#2a9070;
+  --red:#8b2020;
+  --muted:#6b6758;
+  --border:#ccc8b8;
+  --mono:'DM Mono',monospace;
+  --serif:'Playfair Display',serif;
+  --sans:'DM Sans',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans);
+  background:var(--paper);
+  color:var(--ink);
+  min-height:100vh;
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(184,134,11,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 100%, rgba(26,107,90,0.05) 0%, transparent 60%);
+}
+
+/* ── HEADER ── */
+header{
+  padding:48px 48px 32px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  flex-wrap:wrap;
+  gap:16px;
+  animation:fadeUp 0.6s ease both;
+}
+.logo-area{}
+.logo-eyebrow{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.15em;
+  color:var(--muted);
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+.logo-title{
+  font-family:var(--serif);
+  font-size:32px;
+  font-weight:700;
+  line-height:1;
+  letter-spacing:-0.01em;
+}
+.logo-title span{color:var(--gold)}
+.header-meta{
+  text-align:right;
+}
+.last-updated{
+  font-family:var(--mono);
+  font-size:12px;
+  color:var(--muted);
+  margin-bottom:4px;
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  font-family:var(--mono);
+  padding:4px 12px;
+  border-radius:99px;
+  background:rgba(26,107,90,0.12);
+  color:var(--teal);
+  border:1px solid rgba(26,107,90,0.2);
+}
+.status-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--teal-light);
+  animation:pulse-dot 2s infinite;
+}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── LAYOUT ── */
+.main{padding:40px 48px 80px;max-width:1400px;margin:0 auto;}
+
+/* ── METRICS ROW ── */
+.metrics-row{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:16px;
+  margin-bottom:40px;
+  animation:fadeUp 0.6s 0.1s ease both;
+}
+.metric-card{
+  background:var(--paper);
+  border:1px solid var(--border);
+  border-radius:3px;
+  padding:20px 22px;
+  position:relative;
+  overflow:hidden;
+  transition:transform 0.15s, box-shadow 0.15s;
+}
+.metric-card::before{
+  content:'';
+  position:absolute;
+  top:0;left:0;right:0;height:3px;
+}
+.metric-card.gold::before{background:linear-gradient(90deg,var(--gold),var(--gold-light))}
+.metric-card.teal::before{background:linear-gradient(90deg,var(--teal),var(--teal-light))}
+.metric-card.red::before{background:var(--red)}
+.metric-card.neutral::before{background:var(--border)}
+.metric-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.08)}
+.metric-label{
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:0.12em;
+  color:var(--muted);
+  text-transform:uppercase;
+  margin-bottom:10px;
+}
+.metric-value{
+  font-family:var(--serif);
+  font-size:28px;
+  font-weight:700;
+  letter-spacing:-0.02em;
+  line-height:1;
+  margin-bottom:6px;
+}
+.metric-change{
+  font-family:var(--mono);
+  font-size:11px;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+.metric-change.up{color:var(--red)}
+.metric-change.down{color:var(--teal)}
+.metric-change.neutral{color:var(--muted)}
+.change-arrow{font-size:10px}
+
+/* ── TWO COLUMN ── */
+.two-col{
+  display:grid;
+  grid-template-columns:1fr 380px;
+  gap:24px;
+  margin-bottom:24px;
+  animation:fadeUp 0.6s 0.2s ease both;
+}
+
+/* ── PANEL ── */
+.panel{
+  background:var(--paper);
+  border:1px solid var(--border);
+  border-radius:3px;
+  overflow:hidden;
+}
+.panel-header{
+  padding:16px 22px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  background:var(--paper2);
+}
+.panel-title{
+  font-family:var(--serif);
+  font-size:15px;
+  font-weight:600;
+  letter-spacing:-0.01em;
+}
+.panel-tag{
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:0.08em;
+  color:var(--muted);
+  text-transform:uppercase;
+}
+.panel-body{padding:22px}
+
+/* ── CHART ── */
+.chart-wrap{position:relative;height:220px}
+
+/* ── NEWS FEED ── */
+.news-list{display:flex;flex-direction:column;gap:0}
+.news-item{
+  padding:14px 0;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  cursor:pointer;
+  transition:background 0.1s;
+}
+.news-item:last-child{border-bottom:none}
+.news-item:hover{background:var(--paper2);margin:0 -22px;padding:14px 22px}
+.news-num{
+  font-family:var(--mono);
+  font-size:10px;
+  color:var(--gold);
+  font-weight:500;
+  flex-shrink:0;
+  margin-top:2px;
+  width:16px;
+}
+.news-text{
+  font-size:13px;
+  line-height:1.5;
+  color:var(--ink);
+}
+.news-tag{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:0.06em;
+  padding:2px 6px;
+  border-radius:2px;
+  margin-top:4px;
+  text-transform:uppercase;
+}
+.news-tag.myr{background:rgba(26,107,90,0.12);color:var(--teal)}
+.news-tag.gold{background:var(--gold-pale);color:var(--gold)}
+.news-tag.oil{background:rgba(139,32,32,0.08);color:var(--red)}
+.news-tag.global{background:rgba(0,0,0,0.06);color:var(--muted)}
+
+/* ── CONNECTIONS GRID ── */
+.connections-row{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:16px;
+  margin-bottom:24px;
+  animation:fadeUp 0.6s 0.3s ease both;
+}
+.connection-card{
+  background:var(--paper);
+  border:1px solid var(--border);
+  border-radius:3px;
+  padding:18px;
+}
+.conn-icon{
+  font-size:20px;
+  margin-bottom:10px;
+  display:block;
+}
+.conn-title{
+  font-family:var(--serif);
+  font-size:13px;
+  font-weight:600;
+  margin-bottom:6px;
+  line-height:1.3;
+}
+.conn-desc{
+  font-size:12px;
+  color:var(--muted);
+  line-height:1.6;
+}
+
+/* ── TELEGRAM PREVIEW ── */
+.tg-section{
+  animation:fadeUp 0.6s 0.4s ease both;
+}
+.tg-frame{
+  background:#17212b;
+  border-radius:3px;
+  overflow:hidden;
+  border:1px solid #2a3a4a;
+}
+.tg-bar{
+  background:#232e3c;
+  padding:12px 18px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  border-bottom:1px solid #2a3a4a;
+}
+.tg-ava{
+  width:34px;height:34px;border-radius:50%;
+  background:linear-gradient(135deg,var(--gold),var(--gold-light));
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:13px;color:#fff;flex-shrink:0;
+}
+.tg-name{font-size:14px;font-weight:500;color:#e8eaf0}
+.tg-sub{font-size:11px;color:#6b7280;margin-top:1px}
+.tg-body{
+  padding:16px 18px 20px;
+  background:#0d1117;
+}
+.tg-bubble{
+  background:#1e2c3a;
+  border-radius:4px 14px 14px 14px;
+  padding:12px 15px;
+  font-size:12.5px;
+  color:#c5d0da;
+  white-space:pre-wrap;
+  line-height:1.7;
+  max-width:600px;
+  font-family:var(--mono);
+}
+.tg-time{font-size:11px;color:#4a5568;text-align:right;margin-top:8px}
+
+/* ── BOTTOM ROW ── */
+.bottom-row{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:24px;
+  animation:fadeUp 0.6s 0.5s ease both;
+}
+
+/* ── REFRESH BTN ── */
+.refresh-btn{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:10px 20px;border-radius:2px;
+  background:var(--gold);color:#fff;
+  font-family:var(--mono);font-size:12px;letter-spacing:0.06em;
+  border:none;cursor:pointer;
+  transition:background 0.15s,transform 0.1s;
+}
+.refresh-btn:hover{background:var(--gold-light)}
+.refresh-btn:active{transform:scale(0.98)}
+.refresh-btn.spinning svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(16px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* ── RESPONSIVE ── */
+@media(max-width:1024px){
+  .metrics-row{grid-template-columns:repeat(2,1fr)}
+  .two-col{grid-template-columns:1fr}
+  .connections-grid{grid-template-columns:repeat(2,1fr)}
+  .bottom-row{grid-template-columns:1fr}
+  header,.main{padding-left:24px;padding-right:24px}
+}
+@media(max-width:600px){
+  .metrics-row{grid-template-columns:1fr 1fr}
+  .connections-row{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-area">
+    <div class="logo-eyebrow">Malaysia Financial Intelligence</div>
+    <div class="logo-title">MY <span>Finance</span> Daily</div>
+  </div>
+  <div class="header-meta">
+    <div class="last-updated" id="last-updated">Last updated: loading...</div>
+    <div class="status-pill">
+      <div class="status-dot"></div>
+      <span>Live data</span>
+    </div>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- METRICS -->
+  <div class="metrics-row">
+    <div class="metric-card gold">
+      <div class="metric-label">Gold Spot/USD · per oz</div>
+      <div class="metric-value" id="m-goldmyr">$2,900</div>
+      <div class="metric-change down" id="m-goldmyr-c"><span class="change-arrow">↑</span> Geopolitical risk</div>
+    </div>
+    <div class="metric-card teal">
+      <div class="metric-label">USD / MYR</div>
+      <div class="metric-value" id="m-usd">3.9400</div>
+      <div class="metric-change down" id="m-usd-c"><span class="change-arrow">↓</span> MYR +10.9% YoY</div>
+    </div>
+    <div class="metric-card neutral">
+      <div class="metric-label">Gold · MYR/gram (24K)</div>
+      <div class="metric-value" id="m-xau">RM 583</div>
+      <div class="metric-change down" id="m-xau-c"><span class="change-arrow">↓</span> 9.5% vs last wk</div>
+    </div>
+    <div class="metric-card neutral">
+      <div class="metric-label">BNM OPR</div>
+      <div class="metric-value">2.75%</div>
+      <div class="metric-change neutral">Unchanged · 4th hold</div>
+    </div>
+  </div>
+
+  <!-- CHART + NEWS -->
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">30-day trend</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="panel-tag" id="chart-toggle-gold" onclick="toggleChart('gold')" style="cursor:pointer;padding:4px 10px;border:1px solid var(--border);background:var(--gold-pale);color:var(--gold);border-radius:2px;font-family:var(--mono);font-size:10px;letter-spacing:0.08em">Gold Spot/USD</button>
+          <button class="panel-tag" id="chart-toggle-usd" onclick="toggleChart('usd')" style="cursor:pointer;padding:4px 10px;border:1px solid var(--border);background:transparent;border-radius:2px;font-family:var(--mono);font-size:10px;letter-spacing:0.08em">USD/MYR</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap"><canvas id="chart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Today's headlines</div>
+        <div class="panel-tag" id="news-time">—</div>
+      </div>
+      <div class="panel-body" style="padding:0 22px">
+        <div class="news-list" id="news-list">
+          <div class="news-item">
+            <div class="news-num">—</div>
+            <div class="news-text" style="color:var(--muted);font-size:12px">Run the bot to fetch today's news headlines</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MARKET CONNECTIONS -->
+  <div class="connections-row">
+    <div class="connection-card">
+      <span class="conn-icon">💵</span>
+      <div class="conn-title">USD weakens → Gold USD rises, but Gold MYR may not</div>
+      <div class="conn-desc">Gold is priced in USD. A stronger Ringgit offsets USD gold price moves — so local gold prices can stay flat even when global gold rallies. This is why gold fell from RM 651 → RM 583 in two weeks despite global gold holding firm.</div>
+    </div>
+    <div class="connection-card">
+      <span class="conn-icon">🏦</span>
+      <div class="conn-title">BNM rate hold → Bond inflows → Stronger MYR</div>
+      <div class="conn-desc">BNM holding at 2.75% while the Fed considers cuts narrows the rate gap in Malaysia's favour. Foreign bond investors pour in for yield — RM 16.5B YTD — strengthening MYR, lowering local gold prices and making imports cheaper.</div>
+    </div>
+    <div class="connection-card">
+      <span class="conn-icon">🛢️</span>
+      <div class="conn-title">Iran conflict → Oil spike → Inflation → BNM caution</div>
+      <div class="conn-desc">Higher oil boosts Petronas export revenue but raises domestic fuel costs, nudging CPI up. This limits BNM's room to cut rates — keeping rates elevated longer, attracting more foreign capital and indirectly supporting MYR.</div>
+    </div>
+    <div class="connection-card">
+      <span class="conn-icon">📦</span>
+      <div class="conn-title">Strong MYR: winners and losers</div>
+      <div class="conn-desc">A strong Ringgit helps importers (cheaper electronics, food, machinery) and data centre FDI projects. But it squeezes palm oil and semiconductor exporters whose USD revenues convert to less Ringgit at home.</div>
+    </div>
+  </div>
+
+  <!-- TELEGRAM PREVIEW + HISTORY -->
+  <div class="bottom-row tg-section">
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-family:var(--serif);font-size:16px;font-weight:600">Today's Telegram message</div>
+        <button class="refresh-btn" id="refresh-btn" onclick="refreshData()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M13 2.5A6.5 6.5 0 1 0 13 11.5"/>
+            <path d="M13 2.5V6.5H9"/>
+          </svg>
+          Refresh rates
+        </button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <input id="metals-key" type="password" placeholder="metals.dev API key (optional — improves gold accuracy)" style="flex:1;padding:8px 12px;font-family:var(--mono);font-size:12px;background:var(--paper2);border:1px solid var(--border);border-radius:2px;color:var(--ink);outline:none"/>
+        <a href="https://metals.dev" target="_blank" style="font-family:var(--mono);font-size:10px;color:var(--gold);text-decoration:none;white-space:nowrap;letter-spacing:0.06em">Get free key ↗</a>
+      </div>
+      <div class="tg-frame">
+        <div class="tg-bar">
+          <div class="tg-ava">MF</div>
+          <div>
+            <div class="tg-name">MY Finance Daily</div>
+            <div class="tg-sub">bot · delivers 8:00 AM MYT</div>
+          </div>
+        </div>
+        <div class="tg-body">
+          <div class="tg-bubble" id="tg-msg">Run the bot or refresh to see today's message preview...</div>
+          <div class="tg-time" id="tg-time">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Rate history</div>
+        <div class="panel-tag">30 days</div>
+      </div>
+      <div class="panel-body" style="padding:0">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="background:var(--paper2)">
+              <th style="padding:10px 18px;text-align:left;font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:var(--muted);font-weight:400;border-bottom:1px solid var(--border)">Date</th>
+              <th style="padding:10px 18px;text-align:right;font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:var(--muted);font-weight:400;border-bottom:1px solid var(--border)">Gold Spot/USD</th>
+              <th style="padding:10px 18px;text-align:right;font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:var(--muted);font-weight:400;border-bottom:1px solid var(--border)">USD/MYR</th>
+              <th style="padding:10px 18px;text-align:right;font-family:var(--mono);font-size:10px;letter-spacing:0.08em;color:var(--muted);font-weight:400;border-bottom:1px solid var(--border)">Gold MYR/g</th>
+            </tr>
+          </thead>
+          <tbody id="history-table">
+            <tr>
+              <td colspan="4" style="padding:20px 18px;text-align:center;color:var(--muted);font-size:12px">History builds up after first bot run</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let chartMode = 'gold';
+let myChart = null;
+let dashData = null;
+
+// ── Load dashboard data ──────────────────────────────────────────────────────
+async function loadDashboardData() {
+  try {
+    const r = await fetch('dashboard-data.json?t=' + Date.now());
+    if (!r.ok) throw new Error('No data yet');
+    dashData = await r.json();
+    applyData(dashData);
+  } catch(e) {
+    console.log('No dashboard data yet:', e.message);
+    fetchLiveRates();
+  }
+}
+
+// ── Fetch live rates (fallback) ──────────────────────────────────────────────
+async function fetchLiveRates() {
+  // Show cached defaults immediately so dashboard is never blank
+  const DEFAULTS = { goldUSD: 4435, myrRate: 3.9400, goldMYR: 560 };
+  document.getElementById('m-goldmyr').textContent = '$' + DEFAULTS.goldUSD.toLocaleString();
+  document.getElementById('m-usd').textContent = DEFAULTS.myrRate.toFixed(4);
+  document.getElementById('m-xau').textContent = 'RM ' + DEFAULTS.goldMYR;
+  document.getElementById('last-updated').textContent = 'Showing cached data — refreshing...';
+  buildDemoChart(DEFAULTS.myrRate, DEFAULTS.goldUSD);
+
+  // Try to fetch live rates in background
+  try {
+    const r = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+    const d = await r.json();
+    const myr = d.rates.MYR;
+
+    // Try live gold price — metals.dev first (LBMA-sourced), then frankfurter fallback
+    let goldUSD = DEFAULTS.goldUSD;
+    const metalsKey = document.getElementById('metals-key')?.value?.trim();
+    if (metalsKey) {
+      try {
+        const g = await fetch(`https://api.metals.dev/v1/spot?api_key=${metalsKey}&base=USD&symbols=XAU`);
+        const gd = await g.json();
+        if (gd.metals?.XAU) goldUSD = Math.round(gd.metals.XAU);
+      } catch(_) {}
+    }
+    // Fallback: frankfurter.app (no key, free)
+    if (goldUSD === DEFAULTS.goldUSD) {
+      try {
+        const g = await fetch('https://api.frankfurter.app/latest?from=XAU&to=USD');
+        const gd = await g.json();
+        if (gd.rates?.USD) goldUSD = Math.round(gd.rates.USD);
+      } catch(_) {}
+    }
+
+    const goldMYR = Math.round(goldUSD * myr / 31.1035);
+
+    document.getElementById('m-goldmyr').textContent = '$' + goldUSD.toLocaleString();
+    document.getElementById('m-usd').textContent = myr.toFixed(4);
+    document.getElementById('m-xau').textContent = 'RM ' + goldMYR;
+    document.getElementById('m-usd-c').innerHTML = myr < 4.0
+      ? '<span class="change-arrow">↓</span> Ringgit strong vs USD'
+      : '<span class="change-arrow">↑</span> Ringgit mild pressure';
+    document.getElementById('m-usd-c').className = 'metric-change ' + (myr < 4.0 ? 'down' : 'up');
+    document.getElementById('m-goldmyr-c').innerHTML = goldUSD > 2800
+      ? '<span class="change-arrow">↑</span> Geopolitical risk'
+      : '<span class="change-arrow">↓</span> Eased from highs';
+    document.getElementById('m-xau-c').innerHTML = goldMYR < 600
+      ? '<span class="change-arrow">↓</span> Eased from highs'
+      : '<span class="change-arrow">↑</span> Elevated near highs';
+    document.getElementById('last-updated').textContent = 'Live rates: ' + new Date().toLocaleTimeString('en-MY', {hour:'2-digit',minute:'2-digit'}) + ' MYT';
+    buildDemoChart(myr, goldUSD);
+  } catch(e) {
+    document.getElementById('last-updated').textContent = 'Cached data (network unavailable)';
+  }
+}
+
+// ── Apply full dashboard data ────────────────────────────────────────────────
+function applyData(d) {
+  const r = d.rates;
+  // m-goldmyr = XAU/USD, m-usd = USD/MYR, m-xau = Gold MYR/g
+  document.getElementById('m-goldmyr').textContent = '$' + r.goldUSD.toLocaleString();
+  document.getElementById('m-usd').textContent = r.myrRate;
+  document.getElementById('m-xau').textContent = 'RM ' + r.goldMYR;
+  document.getElementById('m-goldmyr-c').innerHTML = r.goldUSD > 2800
+    ? '<span class="change-arrow">↑</span> Geopolitical risk'
+    : '<span class="change-arrow">↓</span> Eased from highs';
+  document.getElementById('m-goldmyr-c').className = 'metric-change ' + (r.goldUSD > 2800 ? 'up' : 'down');
+  document.getElementById('m-usd-c').innerHTML = r.myrStrong
+    ? '<span class="change-arrow">↓</span> Ringgit strong vs USD'
+    : '<span class="change-arrow">↑</span> Ringgit mild pressure';
+  document.getElementById('m-usd-c').className = 'metric-change ' + (r.myrStrong ? 'down' : 'up');
+  document.getElementById('m-xau-c').innerHTML = r.goldMYR < 600
+    ? '<span class="change-arrow">↓</span> Eased from highs'
+    : '<span class="change-arrow">↑</span> Elevated near highs';
+  document.getElementById('m-xau-c').className = 'metric-change ' + (r.goldMYR < 600 ? 'down' : 'up');
+
+  const ts = new Date(d.lastUpdated).toLocaleString('en-MY', {
+    month:'short', day:'numeric', hour:'2-digit', minute:'2-digit',
+    timeZone:'Asia/Kuala_Lumpur'
+  });
+  document.getElementById('last-updated').textContent = 'Last updated: ' + ts + ' MYT';
+  document.getElementById('news-time').textContent = new Date(d.lastUpdated).toLocaleDateString('en-MY', {month:'short',day:'numeric'});
+
+  // Telegram message
+  if (d.message) {
+    document.getElementById('tg-msg').textContent = d.message;
+    document.getElementById('tg-time').textContent = new Date(d.lastUpdated).toLocaleTimeString('en-MY', {hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kuala_Lumpur'}) + ' MYT ✓';
+  }
+
+  // Parse news from message
+  if (d.message) {
+    const newsMatch = d.message.match(/NEWS TODAY\n([\s\S]*?)\n─/);
+    if (newsMatch) {
+      const lines = newsMatch[1].split('\n').filter(l => l.trim().startsWith('•'));
+      renderNews(lines);
+    }
+  }
+
+  // History table + chart
+  if (d.history && d.history.length > 0) {
+    renderHistory(d.history);
+    buildChartFromHistory(d.history);
+  } else {
+    buildDemoChart(parseFloat(r.myrRate), r.goldMYR);
+  }
+}
+
+// ── Render news items ────────────────────────────────────────────────────────
+function renderNews(lines) {
+  if (!lines.length) return;
+  const tags = ['myr','gold','oil','global','myr'];
+  const list = document.getElementById('news-list');
+  list.innerHTML = lines.map((l, i) => {
+    const text = l.replace(/^•\s*/,'');
+    const tag = tags[i % tags.length];
+    const tagLabels = {myr:'MYR',gold:'Gold',oil:'Oil',global:'Global'};
+    return `<div class="news-item">
+      <div class="news-num">0${i+1}</div>
+      <div class="news-text">${text}<br><span class="news-tag ${tag}">${tagLabels[tag]}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Render history table ─────────────────────────────────────────────────────
+function renderHistory(history) {
+  const rows = [...history].reverse().slice(0, 10);
+  document.getElementById('history-table').innerHTML = rows.map((h, i) => `
+    <tr style="border-bottom:1px solid var(--border);${i % 2 === 1 ? 'background:var(--paper2)' : ''}">
+      <td style="padding:9px 18px;font-family:var(--mono);font-size:11px">${h.date}</td>
+      <td style="padding:9px 18px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--gold)">$${h.goldUSD}</td>
+      <td style="padding:9px 18px;text-align:right;font-family:var(--mono);font-size:11px">${h.myrRate.toFixed ? h.myrRate.toFixed(4) : h.myrRate}</td>
+      <td style="padding:9px 18px;text-align:right;font-family:var(--mono);font-size:11px">RM ${h.goldMYR}</td>
+    </tr>
+  `).join('');
+}
+
+// ── Build chart from history ─────────────────────────────────────────────────
+function buildChartFromHistory(history) {
+  const labels = history.map(h => h.date.split(',')[0]);
+  const goldData = history.map(h => h.goldUSD);
+  const usdData  = history.map(h => parseFloat(h.myrRate));
+  renderChart(labels, goldData, usdData);
+}
+
+// ── Build demo chart ─────────────────────────────────────────────────────────
+function buildDemoChart(myrRate, goldUSD) {
+  const days = 30;
+  const labels = [], goldData = [], usdData = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    labels.push(d.toLocaleDateString('en-MY', {month:'short', day:'numeric'}));
+    goldData.push(Math.round(goldUSD + Math.sin(i * 0.4) * 40 + (Math.random() * 16 - 8)));
+    usdData.push(parseFloat((myrRate + Math.sin(i * 0.3) * 0.05 + (Math.random() * 0.02 - 0.01)).toFixed(4)));
+  }
+  renderChart(labels, goldData, usdData);
+}
+
+// ── Render Chart.js ──────────────────────────────────────────────────────────
+function renderChart(labels, goldData, usdData) {
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (myChart) myChart.destroy();
+
+  const isGold = chartMode === 'gold';
+  const data   = isGold ? goldData : usdData;
+  const color  = isGold ? '#b8860b' : '#1a6b5a';
+  const label  = isGold ? 'Gold Spot/USD' : 'USD/MYR';
+
+  myChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: color + '18',
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        fill: true,
+        tension: 0.4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#fff',
+          titleColor: '#0a0a08',
+          bodyColor: '#6b6758',
+          borderColor: '#ccc8b8',
+          borderWidth: 1,
+          padding: 10,
+          titleFont: { family: "'DM Mono', monospace", size: 11 },
+          bodyFont: { family: "'DM Mono', monospace", size: 12 }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            font: { family: "'DM Mono', monospace", size: 10 },
+            color: '#6b6758',
+            maxTicksLimit: 6,
+            maxRotation: 0
+          },
+          border: { display: false }
+        },
+        y: {
+          grid: { color: '#e0dbd0', lineWidth: 0.5 },
+          ticks: {
+            font: { family: "'DM Mono', monospace", size: 10 },
+            color: '#6b6758',
+            maxTicksLimit: 5
+          },
+          border: { display: false }
+        }
+      }
+    }
+  });
+}
+
+// ── Toggle chart mode ────────────────────────────────────────────────────────
+function toggleChart(mode) {
+  chartMode = mode;
+  const btnGold = document.getElementById('chart-toggle-gold');
+  const btnUsd  = document.getElementById('chart-toggle-usd');
+  if (mode === 'gold') {
+    btnGold.style.background = 'var(--gold-pale)';
+    btnGold.style.color = 'var(--gold)';
+    btnUsd.style.background = 'transparent';
+    btnUsd.style.color = 'var(--muted)';
+  } else {
+    btnUsd.style.background = 'rgba(26,107,90,0.12)';
+    btnUsd.style.color = 'var(--teal)';
+    btnGold.style.background = 'transparent';
+    btnGold.style.color = 'var(--muted)';
+  }
+  if (dashData?.history?.length) buildChartFromHistory(dashData.history);
+  else fetchLiveRates();
+}
+
+// ── Refresh button ───────────────────────────────────────────────────────────
+async function refreshData() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  await loadDashboardData();
+  setTimeout(() => {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }, 800);
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+loadDashboardData();
+</script>
+</body>
+</html>

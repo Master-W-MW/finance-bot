@@ -1,89 +1,104 @@
+// MY Finance Telegram Bot — with live news + dashboard data
+// Runs daily at 00:00 UTC (8:00 AM MYT) via Railway cron
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID   = process.env.CHAT_ID;
 const ANTH_KEY  = process.env.ANTH_KEY;
 
+// ─── Fetch live exchange rate ───────────────────────────────────────────────
 async function fetchRates() {
-  // Exchange rate: USD/MYR
-  const fxRes = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
-  const fxData = await fxRes.json();
-  const myrRate = fxData.rates.MYR;
-
-  // Gold price in USD (metals-api free tier)
+  const r = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
+  const d = await r.json();
+  const myr = d.rates.MYR;
   let goldUSD = null;
-  try {
-    const goldRes = await fetch("https://api.metals.live/v1/spot/gold");
-    const goldData = await goldRes.json();
-    goldUSD = goldData[0]?.price;
-  } catch (_) {}
-
-  // Fallback: use GoldAPI.io free endpoint
-  if (!goldUSD) {
+  // metals.dev — LBMA-sourced gold price (same benchmark Bloomberg uses)
+  const METALS_KEY = process.env.METALS_KEY;
+  if (METALS_KEY) {
     try {
-      const g2 = await fetch("https://www.goldapi.io/api/XAU/USD", {
-        headers: { "x-access-token": "goldapi-demo" }
-      });
-      const g2d = await g2.json();
-      goldUSD = g2d.price;
-    } catch (_) {}
+      const g = await fetch(`https://api.metals.dev/v1/spot?api_key=${METALS_KEY}&base=USD&symbols=XAU`);
+      const gd = await g.json();
+      if (gd.metals?.XAU) goldUSD = Math.round(gd.metals.XAU);
+    } catch(_) {}
   }
 
-  // Final fallback to a reasonable cached value
-  if (!goldUSD || isNaN(goldUSD)) goldUSD = 2900;
+  // Fallback: frankfurter.app (no key needed)
+  if (!goldUSD) {
+    try {
+      const g = await fetch("https://api.frankfurter.app/latest?from=XAU&to=USD");
+      const gd = await g.json();
+      if (gd.rates?.USD) goldUSD = Math.round(gd.rates.USD);
+    } catch(_) {}
+  }
 
-  const goldMYR = Math.round(goldUSD * myrRate / 31.1035);
+  if (!goldUSD || isNaN(goldUSD)) goldUSD = 4435; // last-resort hardcoded fallback
+
+  const goldMYR = Math.round(goldUSD * myr / 31.1035);
   return {
-    myrRate: myrRate.toFixed(4),
-    goldUSD: Math.round(goldUSD),
+    myrRate:  myr.toFixed(4),
+    goldUSD:  Math.round(goldUSD),
     goldMYR,
-    myrStrong: myrRate < 4.0,
-    goldTrend: goldMYR < 600 ? "eased from recent highs" : "elevated near recent highs"
+    myrStrong: myr < 4.0
   };
 }
 
-async function buildAnalysis(r) {
+// ─── Fetch live news + build full AI message ────────────────────────────────
+async function buildMessage(rates) {
   const today = new Date().toLocaleDateString("en-MY", {
     weekday: "long", year: "numeric", month: "short", day: "numeric",
     timeZone: "Asia/Kuala_Lumpur"
   });
-  const myrMood = r.myrStrong ? "Ringgit holding strong vs dollar" : "Ringgit under mild pressure";
   const ts = new Date().toLocaleTimeString("en-MY", {
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuala_Lumpur"
   });
 
-  if (!ANTH_KEY) {
-    return buildFallbackMessage(r, today, myrMood, ts);
-  }
+  if (!ANTH_KEY) return buildFallback(rates, today, ts);
 
-  const prompt = `You are a sharp financial analyst writing a Telegram daily brief for a Malaysian investor. Today is ${today}.
+  // Use Claude with web search to get today's news AND write the brief
+  const prompt = `Today is ${today}. You have access to the web_search tool.
 
-Live market data fetched right now:
-- Gold spot price: USD ${r.goldUSD}/oz (live)
-- USD/MYR exchange rate: ${r.myrRate} (live)
-- Gold price in MYR: ~RM ${r.goldMYR}/gram (24K, calculated live)
-- BNM OPR: 2.75% (unchanged, 4th consecutive hold)
-- Malaysia CPI: 1.6% YoY (Jan 2026)
-- Malaysia GDP Q4 2025: 6.3% YoY
-- MYR: Asia top performing currency, +10.9% YoY vs USD
-- Context: Iran-US conflict keeping oil elevated; Fed rate decision upcoming; MY data centre FDI boom ongoing
+Live market data (already fetched):
+- Gold spot: USD ${rates.goldUSD}/oz
+- USD/MYR rate: ${rates.myrRate}
+- Gold in MYR: ~RM ${rates.goldMYR}/gram (24K)
+- BNM OPR: 2.75% (unchanged)
+- Malaysia CPI: 1.6% YoY | GDP Q4 2025: 6.3% YoY
+- MYR: Asia top performer, +10.9% YoY vs USD
 
-Write a Telegram daily brief with these exact sections:
+TASK:
+1. First use web_search to find TODAY's top 3-5 financial news headlines relevant to Malaysia, gold price, USD/MYR, oil price, or global markets. Search for: "Malaysia finance news today" and "gold price USD MYR today"
+2. Then write a Telegram daily brief with these exact sections:
 
-1. Header: date + one-line market mood sentence
+📰 NEWS TODAY
+[3-5 bullet points of actual headlines from your search, each starting with •]
 
-2. KEY NUMBERS
-List all 5 numbers cleanly (gold MYR/g, USD/MYR, gold USD/oz, BNM rate, CPI)
+─────────────────
+KEY NUMBERS
+─────────────────
+[5 numbers: gold MYR/g, USD/MYR, gold USD/oz, BNM OPR, CPI]
 
-3. HOW THESE MARKETS CONNECT
-Write 4 short paragraphs, each starting with an emoji label:
-💵 USD & Gold — explain USD/gold inverse relationship and how MYR exchange rate affects what Malaysians actually pay for gold
-🏦 BNM Rate & Ringgit — explain how rate hold attracts bond inflows, strengthens MYR, feeds back into gold price and imports
-🛢️ Oil & Inflation — explain how Iran conflict raises oil, nudges CPI, limits BNM rate cuts, indirectly supports MYR
-📦 Strong MYR: Winners & Losers — importers vs exporters, data centre FDI context
+─────────────────
+HOW THESE MARKETS CONNECT
+─────────────────
+💵 USD & Gold
+[2-3 sentences: how USD weakness/strength flows into gold USD price and then MYR gold price via exchange rate]
 
-4. WATCH TODAY
-One sharp line: what specific data or event to watch and why it matters for MYR and gold
+🏦 BNM Rate & Ringgit
+[2-3 sentences: how BNM rate hold attracts bond inflows, strengthens MYR, lowers local gold price]
 
-Plain text only. No markdown (* _ etc). Max 5 emoji total (the section labels count). Keep it intelligent and specific to today's actual numbers.`;
+🛢️ Oil & Inflation
+[2-3 sentences: how today's oil news affects Malaysia's CPI and BNM rate decision room]
+
+📦 MYR Impact: Winners & Losers
+[2 sentences: who benefits and who loses from current MYR strength]
+
+─────────────────
+🔍 WATCH TODAY
+─────────────────
+[One sharp sentence: what specific event or data release to watch and why]
+
+Rates fetched live: ${ts} MYT
+
+Plain text only. No markdown (* _ # etc). Max 6 emoji (section headers only). Be specific to today's actual news.`;
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -94,22 +109,33 @@ Plain text only. No markdown (* _ etc). Max 5 emoji total (the section labels co
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
+      max_tokens: 1500,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: prompt }]
     })
   });
 
   if (!resp.ok) {
-    console.error("Claude API error:", resp.status);
-    return buildFallbackMessage(r, today, myrMood, ts);
+    console.error("Claude API error:", resp.status, await resp.text());
+    return buildFallback(rates, today, ts);
   }
 
   const data = await resp.json();
-  const text = data.content?.find(b => b.type === "text")?.text || "";
-  return text + `\n\nRates fetched live: ${ts} MYT`;
+  // Extract final text response (after tool use)
+  const text = data.content
+    ?.filter(b => b.type === "text")
+    .map(b => b.text)
+    .join("") || "";
+
+  if (!text) return buildFallback(rates, today, ts);
+  return text;
 }
 
-function buildFallbackMessage(r, today, myrMood, ts) {
+// ─── Fallback message (no API key or error) ─────────────────────────────────
+function buildFallback(rates, today, ts) {
+  const myrMood = rates.myrStrong ? "Ringgit holding strong vs dollar" : "Ringgit under mild pressure";
+  const goldTrend = rates.goldMYR < 600 ? "eased from recent highs" : "elevated near recent highs";
+
   return `📊 MY Finance Update
 ${today} — 8:00 AM MYT
 ${myrMood}
@@ -117,9 +143,9 @@ ${myrMood}
 ─────────────────
 KEY NUMBERS
 ─────────────────
-💛 Gold (24K): RM ${r.goldMYR}/g
-💵 USD/MYR: ${r.myrRate}
-📈 Gold (oz): USD ${r.goldUSD}
+💛 Gold (24K): RM ${rates.goldMYR}/g
+💵 USD/MYR: ${rates.myrRate}
+📈 Gold (oz): USD ${rates.goldUSD}
 🏦 BNM OPR: 2.75% (on hold)
 📦 CPI: 1.6% YoY | GDP Q4: 6.3%
 
@@ -127,16 +153,16 @@ KEY NUMBERS
 HOW THESE MARKETS CONNECT
 ─────────────────
 💵 USD & Gold
-Gold is priced in USD globally. When USD weakens, non-USD buyers find gold cheaper, lifting demand and pushing its USD price up. But what Malaysians actually pay depends on BOTH the USD gold price AND the USD/MYR rate. At ${r.myrRate} today, gold has ${r.goldTrend} in MYR terms — the Ringgit acts as a natural hedge, softening local gold price swings even when global gold moves.
+Gold is priced in USD globally. When USD weakens, non-USD buyers find gold cheaper, lifting demand and its USD price. But what Malaysians pay depends on BOTH the USD gold price AND the USD/MYR rate. At ${rates.myrRate} today, gold has ${goldTrend} in MYR terms — the Ringgit acts as a natural hedge.
 
 🏦 BNM Rate & Ringgit
-BNM holding at 2.75% while the Fed weighs cuts narrows the rate gap in Malaysia's favour. Foreign bond investors pour into Malaysian assets for the yield, driving MYR demand and strengthening the Ringgit. More MYR demand means stronger Ringgit — which lowers local gold prices and makes imports cheaper.
+BNM holding at 2.75% while the Fed weighs cuts narrows the rate gap in Malaysia's favour. Foreign bond investors pour into Malaysian assets for yield, driving MYR demand. More MYR demand means stronger Ringgit — which lowers local gold prices and makes imports cheaper.
 
 🛢️ Oil & Inflation
-Malaysia exports oil via Petronas, so higher oil prices boost export revenue — but also raise domestic fuel and transport costs, nudging CPI up. Rising inflation reduces BNM's room to cut rates, keeping rates elevated longer, which continues attracting foreign capital and supporting MYR.
+Malaysia exports oil via Petronas, so higher oil prices boost export revenue but also raise domestic fuel costs, nudging CPI up. Rising inflation reduces BNM's room to cut rates, keeping rates elevated and continuing to attract foreign capital.
 
-📦 Strong MYR: Winners & Losers
-A strong Ringgit helps importers (cheaper electronics, machinery, food) and data centre FDI projects. But it squeezes palm oil and semiconductor exporters who earn in USD — their Ringgit revenue shrinks on conversion.
+📦 MYR Impact: Winners & Losers
+A strong Ringgit helps importers (cheaper electronics, machinery, food) and data centre FDI. But it squeezes palm oil and semiconductor exporters who earn in USD.
 
 ─────────────────
 🔍 WATCH TODAY
@@ -146,27 +172,65 @@ US Fed commentary + Brent crude price — both move USD/MYR and gold simultaneou
 Rates fetched live: ${ts} MYT`;
 }
 
+// ─── Save dashboard data to a JSON file ─────────────────────────────────────
+async function saveDashboardData(rates, message) {
+  const fs = await import("fs");
+  const data = {
+    lastUpdated: new Date().toISOString(),
+    rates,
+    message,
+    history: []
+  };
+  // Load existing history if it exists
+  try {
+    const existing = JSON.parse(fs.readFileSync("dashboard-data.json", "utf8"));
+    data.history = (existing.history || []).slice(-29); // keep last 30 days
+    data.history.push({
+      date: new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" }),
+      goldMYR: rates.goldMYR,
+      goldUSD: rates.goldUSD,
+      myrRate: parseFloat(rates.myrRate)
+    });
+  } catch(_) {
+    data.history = [{
+      date: new Date().toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" }),
+      goldMYR: rates.goldMYR,
+      goldUSD: rates.goldUSD,
+      myrRate: parseFloat(rates.myrRate)
+    }];
+  }
+  fs.writeFileSync("dashboard-data.json", JSON.stringify(data, null, 2));
+  console.log("Dashboard data saved.");
+}
+
+// ─── Send to Telegram ────────────────────────────────────────────────────────
 async function sendTelegram(text) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: CHAT_ID, text })
   });
-  const data = await res.json();
-  if (!data.ok) throw new Error("Telegram error: " + data.description);
-  console.log("✓ Message sent to Telegram at", new Date().toISOString());
+  const d = await r.json();
+  if (!d.ok) throw new Error("Telegram error: " + d.description);
+  console.log("Message sent to Telegram at", new Date().toISOString());
 }
 
+// ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   if (!BOT_TOKEN || !CHAT_ID) {
-    console.error("Missing BOT_TOKEN or CHAT_ID environment variables.");
+    console.error("Missing BOT_TOKEN or CHAT_ID.");
     process.exit(1);
   }
   console.log("Fetching live rates...");
   const rates = await fetchRates();
   console.log(`USD/MYR: ${rates.myrRate} | Gold: USD ${rates.goldUSD}/oz | RM ${rates.goldMYR}/g`);
-  console.log("Building message...");
-  const message = await buildAnalysis(rates);
+
+  console.log("Building message with live news...");
+  const message = await buildMessage(rates);
+
+  console.log("Saving dashboard data...");
+  await saveDashboardData(rates, message);
+
   console.log("Sending to Telegram...");
   await sendTelegram(message);
   console.log("Done.");
